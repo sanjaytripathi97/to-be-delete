@@ -1,0 +1,349 @@
+
+# OpenShift Logging Deployment with LokiStack
+
+In this guide, we will deploy OpenShift Logging using **LokiStack** for log storage. Since **Elasticsearch** will soon be deprecated, **LokiStack** is used for log storage and management.
+
+### 1. **Install Loki and Logging Operators**
+
+#### **Install Loki Operator via OpenShift Web Console**
+
+1. Log in to the OpenShift Container Platform web console and navigate to **Operators → OperatorHub**.
+2. In the **Filter by keyword** field, search for **Loki Operator**.
+3. Click on **Loki Operator** in the list of available Operators and then click **Install**.
+4. Select the **Update channel** as either `stable` or `stable-x.y`.
+5. The Loki Operator must be deployed to the `openshift-operators-redhat` namespace. This is automatically selected for you. If the namespace does not exist, it will be created.
+6. Select **Enable Operator-recommended cluster monitoring** for this namespace. This sets the `openshift.io/cluster-monitoring: "true"` label on the namespace, ensuring that cluster monitoring scrapes the `openshift-operators-redhat` namespace.
+7. For **Update approval**, select **Automatic**.
+8. Click **Install**.
+
+#### **Install Red Hat OpenShift Logging Operator via Web Console**
+
+1. In the OpenShift Container Platform web console, navigate to **Operators → OperatorHub**.
+2. Choose **Red Hat OpenShift Logging** from the list of available Operators and click **Install**.
+3. Ensure that the **Installation Mode** is set to **A specific namespace on the cluster**.
+4. Ensure the **Installed Namespace** is set to `openshift-logging`.
+5. Select **Enable Operator-recommended cluster monitoring** for the `openshift-logging` namespace.
+6. Choose **Update Channel** as `stable-5.y`.
+7. Select an **Approval Strategy** (Automatic or Manual).
+8. Click **Install**.
+
+#### **Verify Installation**
+
+1. Go to **Operators → Installed Operators**.
+2. Ensure that both the **Loki Operator** and **OpenShift Logging Operator** are installed and running.
+
+---
+
+### 2. **Install Loki and Logging Operators via CLI**
+
+#### **Create a Namespace for Loki Operator**
+
+Create a namespace for the **Loki Operator** using the following YAML definition:
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-operators-redhat
+  annotations:
+    openshift.io/node-selector: ""
+  labels:
+    openshift.io/cluster-monitoring: "true"
+```
+
+Apply the namespace using the command:
+
+```bash
+$ oc apply -f <filename>.yaml
+```
+
+#### **Create a Subscription for Loki Operator**
+
+Create a subscription object for the **Loki Operator**:
+
+```yaml
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: loki-operator
+  namespace: openshift-operators-redhat
+spec:
+  channel: stable
+  name: loki-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+```
+
+Apply the subscription using the command:
+
+```bash
+$ oc apply -f <filename>.yaml
+```
+
+#### **Create a Namespace for OpenShift Logging Operator**
+
+Create a namespace for the **OpenShift Logging Operator** using the following YAML:
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-logging
+  annotations:
+    openshift.io/node-selector: ""
+  labels:
+    openshift.io/cluster-logging: "true"
+    openshift.io/cluster-monitoring: "true"
+```
+
+Apply the namespace using the command:
+
+```bash
+$ oc apply -f <filename>.yaml
+```
+
+#### **Create an OperatorGroup for OpenShift Logging**
+
+Create an **OperatorGroup** for the `openshift-logging` namespace:
+
+```yaml
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: cluster-logging
+  namespace: openshift-logging
+spec:
+  targetNamespaces:
+  - openshift-logging
+```
+
+Apply the OperatorGroup using the command:
+
+```bash
+$ oc apply -f <filename>.yaml
+```
+
+#### **Create a Subscription for OpenShift Logging**
+
+Create a subscription for the **OpenShift Logging Operator**:
+
+```yaml
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: cluster-logging
+  namespace: openshift-logging
+spec:
+  channel: stable
+  name: cluster-logging
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+```
+
+Apply the subscription using the command:
+
+```bash
+$ oc apply -f <filename>.yaml
+```
+
+---
+
+### 3. **Install the Cluster Observability Operator**
+
+The **Cluster Observability Operator** helps with the deprecated Kibana UI. Follow these steps:
+
+1. In the OpenShift web console, navigate to **Operators → OperatorHub**.
+2. Search for **Cluster Observability Operator** and click on it.
+3. Review the default settings:
+   - **Update channel**: `development`
+   - **Version**: Latest stable version
+   - **Installation mode**: `All namespaces on the cluster` (default)
+   - **Installed Namespace**: `openshift-operators`
+   - **Update approval**: `Automatic`
+
+4. Click **Install**.
+
+#### **Verify the Cluster Observability Operator**
+
+1. Go to **Operators → Installed Operators**.
+2. Verify that the **Cluster Observability Operator** entry appears.
+
+---
+
+### 4. **Create and Deploy LokiStack**
+
+#### **Create Azure Blob Storage for Loki**
+
+1. Create an Azure Blob storage account.
+2. Save the following credentials:
+   - **Container Name**
+   - **Account Name**
+   - **Account Key**
+
+#### **Create a Secret for Loki in OpenShift**
+
+Create a secret with your Azure Blob storage credentials using the following command:
+
+```bash
+$ oc create secret generic logging-loki-azure \
+  --from-literal=container="<azure_container_name>" \
+  --from-literal=environment="<azure_environment>" \
+  --from-literal=account_name="<azure_account_name>" \
+  --from-literal=account_key="<azure_account_key>"
+```
+
+Alternatively, use the following YAML definition for the secret:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: logging-loki-azure
+type: Opaque
+data:
+  container: <base64_encoded_azure_container_name>
+  environment: <base64_encoded_azure_environment>
+  account_name: <base64_encoded_azure_account_name>
+  account_key: <base64_encoded_azure_account_key>
+```
+
+#### **Create LokiStack Instance YAML**
+
+Create the LokiStack instance by defining the following YAML:
+
+```yaml
+apiVersion: loki.grafana.com/v1
+kind: LokiStack
+metadata:
+  name: logging-loki
+  namespace: openshift-logging
+spec:
+  managementState: Managed
+  size: 1x.extra-small
+  storage:
+    schemas:
+      - effectiveDate: '2022-06-01'
+        version: v13
+    secret:
+      name: logging-loki-azure
+      type: azure
+    storageClassName: <sc-name>
+  tenants:
+    mode: openshift-logging
+```
+
+Apply the YAML definition using:
+
+```bash
+$ oc apply -f <filename>.yaml
+```
+
+#### **Create Service Account and Role Bindings for Loki**
+
+1. Create a service account for the Loki collector:
+
+```bash
+$ oc create sa collector -n openshift-logging
+```
+
+2. Add cluster roles to the service account:
+
+```bash
+$ oc adm policy add-cluster-role-to-user logging-collector-logs-writer -z collector
+$ oc adm policy add-cluster-role-to-user collect-application-logs -z collector
+$ oc adm policy add-cluster-role-to-user collect-audit-logs -z collector
+$ oc adm policy add-cluster-role-to-user collect-infrastructure-logs -z collector
+```
+
+---
+
+### 5. **Create ClusterLogForwarder**
+
+The **ClusterLogForwarder** defines how logs are sent to Loki. Use the following YAML definition:
+
+```yaml
+apiVersion: observability.openshift.io/v1
+kind: ClusterLogForwarder
+metadata:
+  name: collector
+  namespace: openshift-logging
+spec:
+  serviceAccount:
+    name: collector
+  outputs:
+    - name: default-lokistack
+      type: lokiStack
+      lokiStack:
+        target:
+          name: logging-loki
+          namespace: openshift-logging
+        authentication:
+          token:
+            from: serviceAccount
+      tls:
+        ca:
+          key: service-ca.crt
+          configMapName: openshift-service-ca.crt
+  pipelines:
+    - name: default-logstore
+      inputRefs:
+        - application
+        - infrastructure
+      outputRefs:
+        - default-lokistack
+```
+
+Apply the ClusterLogForwarder YAML using:
+
+```bash
+$ oc apply -f <filename>.yaml
+```
+
+---
+
+### 6. **Configure UI for Logging**
+
+Since **Kibana** is deprecated, the **Cluster Observability Operator** helps with the UI.
+
+Create an instance of **UIPlugin**:
+
+```yaml
+apiVersion: observability.openshift.io/v1alpha1
+kind: UIPlugin
+metadata:
+  name: logging
+spec:
+  type: Logging
+  logging:
+    lokiStack:
+      name: logging-l
+
+oki
+```
+
+Apply the YAML using:
+
+```bash
+$ oc apply -f <filename>.yaml
+```
+
+---
+
+### 7. **Verify the Installation**
+
+1. Go to the `openshift-logging` project.
+2. Verify that all necessary pods (Loki, OpenShift Logging, and Cluster Observability) are running:
+
+```bash
+$ oc get pods -n openshift-logging
+```
+
+---
+
+This concludes the OpenShift logging deployment with **LokiStack**. Ensure that logs are correctly forwarded to Loki, and the UI is accessible via the Cluster Observability Operator.
+
+### How to Check the Logs
+
+1. In the OpenShift Console (GUI), navigate to the **Observability** tab on the left-hand side. Under this tab, click on **Logs**.
+2. You will see all the logs, and you can filter them by **namespace** and **pod** to view specific logs.
+3. Additionally, when you select any pod in the GUI, a tab named **Aggregated Logs** will appear. In this tab, you can also view the logs for that specific pod.
